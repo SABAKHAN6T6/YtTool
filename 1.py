@@ -1,134 +1,105 @@
 import streamlit as st
 import requests
 from datetime import datetime, timedelta
-import os
 
-# Retrieve API key from environment variable (replace "YOUR_API_KEY_HERE" if needed)
-API_KEY = os.getenv("AIzaSyBrzgzfBoSm6vpamvNXqVh5wTbvae-CXqQ", "AIzaSyBrzgzfBoSm6vpamvNXqVh5wTbvae-CXqQ")
-
+# YouTube API Key
+API_KEY = "AIzaSyBrzgzfBoSm6vpamvNXqVh5wTbvae-CXqQ"
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 YOUTUBE_VIDEO_URL = "https://www.googleapis.com/youtube/v3/videos"
 YOUTUBE_CHANNEL_URL = "https://www.googleapis.com/youtube/v3/channels"
 
+# Streamlit App Title
 st.title("YouTube Viral Topics Tool")
 
-# User inputs
+# Input Fields
 days = st.number_input("Enter Days to Search (1-30):", min_value=1, max_value=30, value=5)
-results_per_keyword = st.number_input("Results per Keyword:", min_value=1, max_value=10, value=5)
 
-# Predefined list of keywords
+# List of broader keywords
 keywords = [
-    "Stoicism", "Stoic Philosophy", "Marcus Aurelius", "Meditations", 
+ "Stoicism", "Stoic Philosophy", "Marcus Aurelius", "Meditations", 
     "Seneca", "Epictetus", "Daily Stoic", "Stoic Quotes", "Modern Stoicism", 
     "Stoic Mindset", "How to Practice Stoicism", "Stoicism for Beginners", "Stoicism in Daily Life", 
     "Stoic Life Lessons", "Stoicism Explained"
 ]
 
-# Caching API responses to improve performance
-@st.cache_data(show_spinner=False)
-def fetch_data_for_keyword(keyword, published_after, max_results):
-    search_params = {
-        "part": "snippet",
-        "q": keyword,
-        "type": "video",
-        "order": "viewCount",
-        "publishedAfter": published_after,
-        "maxResults": max_results,
-        "key": API_KEY,
-    }
-    response = requests.get(YOUTUBE_SEARCH_URL, params=search_params)
-    return response.json()
-
-@st.cache_data(show_spinner=False)
-def fetch_video_stats(video_ids):
-    stats_params = {
-        "part": "statistics",
-        "id": ",".join(video_ids),
-        "key": API_KEY,
-    }
-    response = requests.get(YOUTUBE_VIDEO_URL, params=stats_params)
-    return response.json()
-
-@st.cache_data(show_spinner=False)
-def fetch_channel_stats(channel_ids):
-    channel_params = {
-        "part": "statistics",
-        "id": ",".join(channel_ids),
-        "key": API_KEY,
-    }
-    response = requests.get(YOUTUBE_CHANNEL_URL, params=channel_params)
-    return response.json()
-
+# Fetch Data Button
 if st.button("Fetch Data"):
     try:
-        # Calculate the publishedAfter date parameter based on user input
+        # Calculate date range
         start_date = (datetime.utcnow() - timedelta(days=int(days))).isoformat("T") + "Z"
         all_results = []
 
+        # Iterate over the list of keywords
         for keyword in keywords:
-            st.write(f"Searching for keyword: **{keyword}**")
-            search_data = fetch_data_for_keyword(keyword, start_date, results_per_keyword)
+            st.write(f"Searching for keyword: {keyword}")
 
-            if "items" not in search_data or not search_data["items"]:
+            # Define search parameters
+            search_params = {
+                "part": "snippet",
+                "q": keyword,
+                "type": "video",
+                "order": "viewCount",
+                "publishedAfter": start_date,
+                "maxResults": 5,
+                "key": API_KEY,
+            }
+
+            # Fetch video data
+            response = requests.get(YOUTUBE_SEARCH_URL, params=search_params)
+            data = response.json()
+
+            # Check if "items" key exists
+            if "items" not in data or not data["items"]:
                 st.warning(f"No videos found for keyword: {keyword}")
                 continue
 
-            videos = search_data["items"]
-            video_ids = []
-            channel_ids = []
-            video_info_map = {}  # Maps video IDs to basic info
-
-            for video in videos:
-                video_id = video.get("id", {}).get("videoId")
-                channel_id = video.get("snippet", {}).get("channelId")
-                if video_id and channel_id:
-                    video_ids.append(video_id)
-                    channel_ids.append(channel_id)
-                    video_info_map[video_id] = {
-                        "Title": video["snippet"].get("title", "N/A"),
-                        "Description": video["snippet"].get("description", "")[:200],
-                        "URL": f"https://www.youtube.com/watch?v={video_id}",
-                        "ChannelID": channel_id
-                    }
+            videos = data["items"]
+            video_ids = [video["id"]["videoId"] for video in videos if "id" in video and "videoId" in video["id"]]
+            channel_ids = [video["snippet"]["channelId"] for video in videos if "snippet" in video and "channelId" in video["snippet"]]
 
             if not video_ids or not channel_ids:
-                st.warning(f"Skipping keyword: {keyword} due to missing video or channel data.")
+                st.warning(f"Skipping keyword: {keyword} due to missing video/channel data.")
                 continue
 
-            stats_data = fetch_video_stats(video_ids)
+            # Fetch video statistics
+            stats_params = {"part": "statistics", "id": ",".join(video_ids), "key": API_KEY}
+            stats_response = requests.get(YOUTUBE_VIDEO_URL, params=stats_params)
+            stats_data = stats_response.json()
+
             if "items" not in stats_data or not stats_data["items"]:
                 st.warning(f"Failed to fetch video statistics for keyword: {keyword}")
                 continue
 
-            channel_data = fetch_channel_stats(channel_ids)
+            # Fetch channel statistics
+            channel_params = {"part": "statistics", "id": ",".join(channel_ids), "key": API_KEY}
+            channel_response = requests.get(YOUTUBE_CHANNEL_URL, params=channel_params)
+            channel_data = channel_response.json()
+
             if "items" not in channel_data or not channel_data["items"]:
                 st.warning(f"Failed to fetch channel statistics for keyword: {keyword}")
                 continue
 
-            # Create dictionaries mapping IDs to statistics
-            video_stats = {item.get("id"): item.get("statistics", {}) for item in stats_data["items"]}
-            channel_stats = {item.get("id"): item.get("statistics", {}) for item in channel_data["items"]}
+            stats = stats_data["items"]
+            channels = channel_data["items"]
 
-            # Combine video and channel data
-            for vid, info in video_info_map.items():
-                stats = video_stats.get(vid, {})
-                channel_id = info.get("ChannelID")
-                channel_stat = channel_stats.get(channel_id, {})
+            # Collect results
+            for video, stat, channel in zip(videos, stats, channels):
+                title = video["snippet"].get("title", "N/A")
+                description = video["snippet"].get("description", "")[:200]
+                video_url = f"https://www.youtube.com/watch?v={video['id']['videoId']}"
+                views = int(stat["statistics"].get("viewCount", 0))
+                subs = int(channel["statistics"].get("subscriberCount", 0))
 
-                views = int(stats.get("viewCount", 0))
-                subs = int(channel_stat.get("subscriberCount", 0))
-
-                # Filter channels with fewer than 3,000 subscribers
-                if subs < 3000:
-                    combined_result = {
-                        "Title": info["Title"],
-                        "Description": info["Description"],
-                        "URL": info["URL"],
+                if subs < 3000:  # Only include channels with fewer than 3,000 subscribers
+                    all_results.append({
+                        "Title": title,
+                        "Description": description,
+                        "URL": video_url,
                         "Views": views,
                         "Subscribers": subs
-                    }
-                    all_results.append(combined_result)
+                    })
 
+        # Display results
         if all_results:
             st.success(f"Found {len(all_results)} results across all keywords!")
             for result in all_results:
@@ -145,3 +116,4 @@ if st.button("Fetch Data"):
 
     except Exception as e:
         st.error(f"An error occurred: {e}")
+

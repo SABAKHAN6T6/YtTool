@@ -3,7 +3,7 @@ import requests
 from datetime import datetime, timedelta
 import os
 
-# Retrieve API key from environment variable (replace "AIzaSyBrzgzfBoSm6vpamvNXqVh5wTbvae-CXqQ" if needed)
+# Retrieve API key from environment variable (replace "YOUR_API_KEY_HERE" if needed)
 API_KEY = os.getenv("AIzaSyBrzgzfBoSm6vpamvNXqVh5wTbvae-CXqQ", "AIzaSyBrzgzfBoSm6vpamvNXqVh5wTbvae-CXqQ")
 
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
@@ -16,35 +16,48 @@ st.title("YouTube Viral Topics Tool")
 days = st.number_input("Enter Days to Search (1-30):", min_value=1, max_value=30, value=5)
 results_per_keyword = st.number_input("Results per Keyword:", min_value=1, max_value=10, value=5)
 
-# Category selection
-selected_categories = st.multiselect(
-    "Select keyword categories:",
-    options=["Relationship/Infidelity", "Stoicism"],
-    default=["Relationship/Infidelity"]
-)
-
-# Predefined lists of keywords
-relationship_keywords = [
-    "Affair Relationship Stories", "Reddit Update", "Reddit Relationship Advice", "Reddit Relationship", 
-    "Reddit Cheating", "AITA Update", "Open Marriage", "Open Relationship", "X BF Caught", 
-    "Stories Cheat", "X GF Reddit", "AskReddit Surviving Infidelity", "GurlCan Reddit", 
-    "Cheating Story Actually Happened", "Cheating Story Real", "True Cheating Story", 
-    "Reddit Cheating Story", "R/Surviving Infidelity", "Surviving Infidelity", 
-    "Reddit Marriage", "Wife Cheated I Can't Forgive", "Reddit AP", "Exposed Wife", 
-    "Cheat Exposed"
+# Predefined list of keywords
+keywords = [
+    "Stoicism", "Stoic Philosophy", "Marcus Aurelius", "Meditations", 
+    "Seneca", "Epictetus", "Daily Stoic", "Stoic Quotes", "Modern Stoicism", 
+    "Stoic Mindset", "How to Practice Stoicism", "Stoicism for Beginners", "Stoicism in Daily Life", 
+    "Stoic Life Lessons", "Stoicism Explained"
 ]
 
-stoicism_keywords = [
-    "Stoicism", "Stoic Philosophy", "Marcus Aurelius", "Seneca", "Epictetus",
-    "Meditations", "Stoic Wisdom", "Stoic Mindset", "Ancient Stoicism", "Modern Stoicism"
-]
+# Caching API responses to improve performance
+@st.cache_data(show_spinner=False)
+def fetch_data_for_keyword(keyword, published_after, max_results):
+    search_params = {
+        "part": "snippet",
+        "q": keyword,
+        "type": "video",
+        "order": "viewCount",
+        "publishedAfter": published_after,
+        "maxResults": max_results,
+        "key": API_KEY,
+    }
+    response = requests.get(YOUTUBE_SEARCH_URL, params=search_params)
+    return response.json()
 
-# Combine keywords based on selected categories
-keywords = []
-if "Relationship/Infidelity" in selected_categories:
-    keywords.extend(relationship_keywords)
-if "Stoicism" in selected_categories:
-    keywords.extend(stoicism_keywords)
+@st.cache_data(show_spinner=False)
+def fetch_video_stats(video_ids):
+    stats_params = {
+        "part": "statistics",
+        "id": ",".join(video_ids),
+        "key": API_KEY,
+    }
+    response = requests.get(YOUTUBE_VIDEO_URL, params=stats_params)
+    return response.json()
+
+@st.cache_data(show_spinner=False)
+def fetch_channel_stats(channel_ids):
+    channel_params = {
+        "part": "statistics",
+        "id": ",".join(channel_ids),
+        "key": API_KEY,
+    }
+    response = requests.get(YOUTUBE_CHANNEL_URL, params=channel_params)
+    return response.json()
 
 if st.button("Fetch Data"):
     try:
@@ -54,17 +67,7 @@ if st.button("Fetch Data"):
 
         for keyword in keywords:
             st.write(f"Searching for keyword: **{keyword}**")
-            search_params = {
-                "part": "snippet",
-                "q": keyword,
-                "type": "video",
-                "order": "viewCount",
-                "publishedAfter": start_date,
-                "maxResults": results_per_keyword,
-                "key": API_KEY,
-            }
-            response = requests.get(YOUTUBE_SEARCH_URL, params=search_params)
-            search_data = response.json()
+            search_data = fetch_data_for_keyword(keyword, start_date, results_per_keyword)
 
             if "items" not in search_data or not search_data["items"]:
                 st.warning(f"No videos found for keyword: {keyword}")
@@ -92,33 +95,17 @@ if st.button("Fetch Data"):
                 st.warning(f"Skipping keyword: {keyword} due to missing video or channel data.")
                 continue
 
-            # Fetch video statistics
-            stats_params = {
-                "part": "statistics",
-                "id": ",".join(video_ids),
-                "key": API_KEY,
-            }
-            stats_response = requests.get(YOUTUBE_VIDEO_URL, params=stats_params)
-            stats_data = stats_response.json()
-
+            stats_data = fetch_video_stats(video_ids)
             if "items" not in stats_data or not stats_data["items"]:
                 st.warning(f"Failed to fetch video statistics for keyword: {keyword}")
                 continue
 
-            # Fetch channel statistics
-            channel_params = {
-                "part": "statistics",
-                "id": ",".join(channel_ids),
-                "key": API_KEY,
-            }
-            channel_response = requests.get(YOUTUBE_CHANNEL_URL, params=channel_params)
-            channel_data = channel_response.json()
-
+            channel_data = fetch_channel_stats(channel_ids)
             if "items" not in channel_data or not channel_data["items"]:
                 st.warning(f"Failed to fetch channel statistics for keyword: {keyword}")
                 continue
 
-            # Map IDs to statistics
+            # Create dictionaries mapping IDs to statistics
             video_stats = {item.get("id"): item.get("statistics", {}) for item in stats_data["items"]}
             channel_stats = {item.get("id"): item.get("statistics", {}) for item in channel_data["items"]}
 
@@ -131,22 +118,19 @@ if st.button("Fetch Data"):
                 views = int(stats.get("viewCount", 0))
                 subs = int(channel_stat.get("subscriberCount", 0))
 
-                # Apply filter only for Relationship/Infidelity keywords:
-                # For stoicism keywords you might not need this filter. Adjust as necessary.
-                if "Relationship/Infidelity" in selected_categories and subs >= 3000:
-                    continue
-
-                combined_result = {
-                    "Title": info["Title"],
-                    "Description": info["Description"],
-                    "URL": info["URL"],
-                    "Views": views,
-                    "Subscribers": subs
-                }
-                all_results.append(combined_result)
+                # Filter channels with fewer than 3,000 subscribers
+                if subs < 3000:
+                    combined_result = {
+                        "Title": info["Title"],
+                        "Description": info["Description"],
+                        "URL": info["URL"],
+                        "Views": views,
+                        "Subscribers": subs
+                    }
+                    all_results.append(combined_result)
 
         if all_results:
-            st.success(f"Found {len(all_results)} results across selected keywords!")
+            st.success(f"Found {len(all_results)} results across all keywords!")
             for result in all_results:
                 st.markdown(
                     f"**Title:** {result['Title']}  \n"
@@ -157,7 +141,7 @@ if st.button("Fetch Data"):
                 )
                 st.write("---")
         else:
-            st.warning("No results found based on the selected criteria.")
+            st.warning("No results found for channels with fewer than 3,000 subscribers.")
 
     except Exception as e:
         st.error(f"An error occurred: {e}")
